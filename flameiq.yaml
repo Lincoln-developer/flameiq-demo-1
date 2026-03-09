@@ -1,0 +1,29 @@
+# flameiq.yaml — FlameIQ configuration
+# Docs: https://docs.flameiq.dev/guides/configuration.html
+
+# ── Regression thresholds ─────────────────────────────────────────────
+# Format: "<metric_key>: <percent>"
+# Positive = allow up to N% increase (latency, memory)
+# Negative = allow up to N% decrease (throughput)
+thresholds:
+  latency.p95:   10%
+  latency.p99:   15%
+  throughput:    -5%
+  memory_mb:      8%
+
+# ── Baseline strategy ─────────────────────────────────────────────────
+baseline:
+  strategy: rolling_median     # last_successful | rolling_median | tagged
+  rolling_window: 5
+
+# ── Statistical significance (optional) ───────────────────────────────
+statistics:
+  enabled: false
+  confidence: 0.95
+
+# ── Noise tolerance ───────────────────────────────────────────────────
+noise:
+  warmup_runs: 0
+
+# ── Default metric provider ───────────────────────────────────────────
+provider: json                 # json | pytest-benchmark
