@@ -27,3 +27,5 @@ noise:
 
 # ── Default metric provider ───────────────────────────────────────────
 provider: json                 # json | pytest-benchmark
+
+# test: triggering CI regression check via PR
