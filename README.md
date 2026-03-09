@@ -15,7 +15,7 @@ catching a real performance regression in a Python library.
 
 ```bash
 # Clone the demo
-git clone https://github.com/Lincoln-developer/flameiq-demo-v4
+git clone https://github.com/Lincoln-developer/flameiq-demo-1.git
 cd flameiq-demo
 
 # Install FlameIQ from PyPI
