@@ -11,30 +11,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout code ────────────────────────────────────────────
       - uses: actions/checkout@v4
 
-      # ── 2. Set up Python ────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # ── 3. Install FlameIQ ──────────────────────────────────────────
-      # We install flameiq-core from PyPI.
-      # The textcraft library needs no install — it is pure Python
-      # in the repo, imported directly by the benchmark scripts.
       - name: Install FlameIQ
         run: pip install flameiq-core
 
-      # ── 4. Restore baseline cache ───────────────────────────────────
-      # The .flameiq/ directory holds the active baseline JSON.
-      # We cache it keyed on the base branch (main) so that:
-      #   - PRs restore the baseline that was set on main
-      #   - main pushes save a new baseline after benchmarking
-      #
-      # restore-keys acts as a fallback — if no exact key match,
-      # use the most recent cache with the flameiq-baseline- prefix.
+      # Restore the baseline that was saved on the last main push.
+      # PRs will find this cache and compare against it.
+      # restore-keys is a fallback in case no exact key match exists.
       - name: Restore baseline cache
         uses: actions/cache@v4
         with:
@@ -42,70 +31,56 @@ jobs:
           key: flameiq-baseline-${{ github.base_ref || 'main' }}
           restore-keys: flameiq-baseline-
 
-      # ── 5. Run benchmarks ───────────────────────────────────────────
-      # benchmark_both.py measures BOTH implementations in one process
-      # to eliminate run-to-run variance (warmup is shared).
-      # It writes:
-      #   baseline_fast.json       — the fast implementation metrics
-      #   current_regressed.json   — the regressed implementation metrics
-      - name: Run benchmarks
-        run: python benchmarks/benchmark_both.py
+      # ── MAIN BRANCH ───────────────────────────────────────────────
+      # On pushes to main, benchmark the FAST (correct) implementation
+      # and store it as the reference baseline for all future PRs.
 
-      # ── 6. Validate metrics ─────────────────────────────────────────
-      # Always validate before setting a baseline or comparing.
-      # Exit code 3 if the file is invalid — stops the pipeline early
-      # with a clear error rather than a confusing comparison failure.
-      - name: Validate metrics
-        run: |
-          flameiq validate baseline_fast.json
-          flameiq validate current_regressed.json
+      - name: Run fast benchmarks
+        if: github.ref == 'refs/heads/main'
+        run: python benchmarks/step2_produce_metrics.py
 
-      # ── 7. Set baseline (main branch only) ──────────────────────────
-      # On every push to main we update the baseline.
-      # This means the baseline always reflects the current state of
-      # main — PRs are always compared against the latest stable run.
+      - name: Validate fast metrics
+        if: github.ref == 'refs/heads/main'
+        run: flameiq validate benchmark.json
+
       - name: Set baseline
         if: github.ref == 'refs/heads/main'
-        run: flameiq baseline set --metrics baseline_fast.json
+        run: flameiq baseline set --metrics benchmark.json
 
-      # ── 8. Compare on pull requests ─────────────────────────────────
-      # On PRs we compare the regressed metrics against the cached
-      # baseline from main.
-      # --fail-on-regression exits 1 if any metric exceeds its threshold,
-      # which causes the CI job to fail and blocks the PR merge.
-      #
-      # --json writes a machine-readable result file alongside the
-      # human-readable terminal output.
+      # ── PULL REQUESTS ─────────────────────────────────────────────
+      # On PRs, benchmark the REGRESSED implementation and compare
+      # it against the baseline set on main.
+      # If any metric exceeds its threshold, the job exits 1 and
+      # blocks the PR from merging.
+
+      - name: Run regressed benchmarks
+        if: github.event_name == 'pull_request'
+        run: python benchmarks/step4_produce_regressed_metrics.py
+
+      - name: Validate current metrics
+        if: github.event_name == 'pull_request'
+        run: flameiq validate current.json
+
       - name: Compare against baseline
         if: github.event_name == 'pull_request'
-        run: |
-          flameiq compare \
-            --metrics current_regressed.json \
-            --fail-on-regression \
-            --json | tee .flameiq/result.json
+        run: flameiq compare --metrics current.json --fail-on-regression
 
-      # ── 9. Generate HTML report ─────────────────────────────────────
-      # if: always() ensures the report is generated even when the
-      # comparison step fails — you want the report most when there
-      # IS a regression, not only when everything passes.
+      # ── ALWAYS ────────────────────────────────────────────────────
+      # Generate an HTML report and upload it as a CI artifact on
+      # every run — including failed ones. You need the report most
+      # when a regression IS detected, not only when everything passes.
+
       - name: Generate performance report
         if: always()
         run: |
-          flameiq report \
-            --metrics current_regressed.json \
-            --output .flameiq/report.html
+          METRICS_FILE=$( [ "${{ github.event_name }}" = "pull_request" ] \
+            && echo "current.json" || echo "benchmark.json" )
+          flameiq report --metrics $METRICS_FILE --output report.html
 
-      # ── 10. Upload report as CI artifact ────────────────────────────
-      # The report and result JSON are uploaded as build artifacts.
-      # They are accessible from the Actions run page for 30 days.
-      # The run number is included in the artifact name so each run
-      # has its own downloadable report.
       - name: Upload performance report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: flameiq-report-${{ github.run_number }}
-          path: |
-            .flameiq/report.html
-            .flameiq/result.json
+          path: report.html
           retention-days: 30
